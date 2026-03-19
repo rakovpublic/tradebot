@@ -91,10 +91,26 @@ data:
 # =============================================================================
 broker:
   provider: paper                      # paper | ibkr | fix
-  # ibkr:
-  #   host: 127.0.0.1
-  #   port: 7497
-  #   client_id: 1
+  ibkr:
+    host: 127.0.0.1
+    port: 4002                         # 4002 = paper, 4001 = live
+    client_id: 1                       # 1=main, 2=monitor, 3=backtest
+    readonly: false
+    timeout: 20
+    # account_id: ""                   # set via IBKR_ACCOUNT_ID env var
+    # max_order_value_usd: 50000       # set via IBKR_MAX_ORDER_USD env var
+    # max_daily_loss_usd: 5000         # set via IBKR_MAX_DAILY_LOSS env var
+    options_stream_interval_seconds: 30.0   # IV surface update frequency
+    options_universe:                  # instruments to stream for L1 ψ_exp
+      - SPX
+      - NDX
+      - SPY
+      - QQQ
+      - IWM
+      - GLD
+      - TLT
+      - HYG
+      - VIX
   # fix:
   #   session_id: ...
   #   credentials_file: config/broker.yaml
