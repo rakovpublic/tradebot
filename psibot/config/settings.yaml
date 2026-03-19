@@ -1,0 +1,137 @@
+# ΨBot Configuration — CCDR Expectation Field Architecture v1.0
+# Edit this file to configure the system for each deployment phase.
+# Phase 0-2: paper trading only (no broker connection).
+# Phase 3+: set broker.provider and credentials.
+
+# =============================================================================
+# PIPELINE TIMING
+# =============================================================================
+pipeline:
+  recalc_interval_minutes: 5           # intraday recalc frequency
+  l1_recalc_on_vol_shift_vega: 0.5    # trigger immediate L1 recalc on vol shift
+  d_eff_rolling_window_days: 60        # D_eff correlation matrix window
+  l2_update_frequency: daily           # analyst data update cadence
+  l2_staleness_threshold_days: 5       # flag L2 data stale after this many business days
+
+# =============================================================================
+# CCDR THRESHOLDS
+# =============================================================================
+thresholds:
+  # D_eff (holographic saturation) levels
+  d_eff_guardian: 3.0                  # GUARDIAN trigger (hard)
+  d_eff_scout: 5.0                     # Scout trigger
+  d_eff_full_hunter: 15.0              # D_eff above this → full size Hunter
+  d_eff_stop_floor: 4.0               # structural stop floor
+
+  # GBP (grain boundary proximity) levels
+  gbp_guardian: 0.8                    # GUARDIAN trigger (hard)
+  gbp_hunter_max: 0.5                  # max GBP for Hunter mode
+  gbp_stop_delta: 0.35                 # GBP stop: exit when GBP > entry + delta
+  gbp_reentry_max: 0.3                 # max GBP for re-entry after stop
+
+  # L2 order/disorder parameter thresholds
+  op_ordered_min: 0.4                  # |OP| above this → ordered phase
+  op_disordered_max: 0.15              # |OP| below this → disordered phase
+  dp_boundary_threshold: 0.25          # DP above this → grain boundary approach
+
+# =============================================================================
+# EXECUTION CONSTRAINTS
+# =============================================================================
+execution:
+  max_risk_usd: 100000                 # max notional per position (USD)
+  max_concurrent_positions: 6          # portfolio constraint
+  max_leverage: 2.0                    # max leverage per single position
+  drawdown_circuit_breaker_pct: 5.0   # 10-day rolling drawdown trigger
+  guardian_cooloff_hours: 48           # min Guardian duration
+
+  # Order types by signal class
+  soliton_order_type: LIMIT            # patient fills for Soliton
+  reorder_order_type: LIMIT
+  guardian_exit_order_type: MARKET     # immediate exit on Guardian
+  saturation_hedge_order_type: LIMIT_TO_MARKET  # limit → market after 15 min
+  limit_to_market_minutes: 15
+
+# =============================================================================
+# DATA SOURCES
+# =============================================================================
+data:
+  options:
+    provider: csv                      # csv | livevol | bloomberg | ibkr
+    symbols: [SPX, NDX, QQQ, SPY, IWM, GLD, TLT, HYG]
+    tenors_days: [7, 14, 30, 91, 182, 365, 730]
+    primary_tenor_days: 30             # primary tenor for ψ_exp classification
+    data_dir: data/surfaces
+
+  analyst:
+    provider: csv                      # csv | ibes
+    symbol: SPX_INDEX
+    update_frequency: daily
+    data_dir: data/analyst
+
+  surveys:
+    aaii_frequency: weekly
+    ii_frequency: weekly
+    data_dir: data/surveys
+
+  dark_pool:
+    provider: csv                      # csv | finra_ats
+    symbols: [SPX_INDEX]
+    update_frequency: daily
+    data_dir: data/dark_pool
+
+  cross_asset:
+    provider: csv                      # csv | yfinance | bloomberg
+    universe: config/universe.yaml     # 27-asset universe definition
+    window_days: 60                    # D_eff rolling window
+    frequency: daily
+    data_dir: data/prices
+
+# =============================================================================
+# BROKER (Phase 3+ only)
+# =============================================================================
+broker:
+  provider: paper                      # paper | ibkr | fix
+  # ibkr:
+  #   host: 127.0.0.1
+  #   port: 7497
+  #   client_id: 1
+  # fix:
+  #   session_id: ...
+  #   credentials_file: config/broker.yaml
+
+# =============================================================================
+# MONITORING
+# =============================================================================
+monitoring:
+  log_level: INFO
+  structured_logging: true
+  snapshot_interval_minutes: 5
+  snapshot_dir: state/snapshots
+
+  alerts:
+    d_eff_warning: 8.0                 # D_eff below this triggers warning alert
+    d_eff_critical: 5.0                # D_eff below this triggers critical alert
+    gbp_warning: 0.5
+    gbp_critical: 0.8
+    drawdown_warning_pct: 3.0
+    drawdown_critical_pct: 5.0
+
+  prometheus:
+    enabled: false                     # set true in production
+    port: 9090
+
+  grafana:
+    enabled: false
+    url: http://localhost:3000
+
+  slack:
+    enabled: false
+    webhook_url: ""                    # set in environment variable SLACK_WEBHOOK
+
+# =============================================================================
+# DEPLOYMENT PHASE
+# =============================================================================
+deployment:
+  current_phase: 0                     # 0=backtest, 1=paper L1+L3, 2=full paper, 3+=live
+  paper_trading: true
+  live_trading: false

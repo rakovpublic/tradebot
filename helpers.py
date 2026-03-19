@@ -22,6 +22,10 @@ import pandas as pd
 from scipy import stats, signal as scipy_signal
 from scipy.interpolate import CubicSpline, RectBivariateSpline
 
+# NumPy 2.x compatibility: np.trapz was renamed to np.trapezoid
+if not hasattr(np, 'trapz'):
+    np.trapz = np.trapezoid
+
 # ---------------------------------------------------------------------------
 # Structured logger
 # ---------------------------------------------------------------------------
