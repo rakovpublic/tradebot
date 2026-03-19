@@ -1,0 +1,204 @@
+# ΨBot 27-Asset Universe — CCDR D_eff Cross-Asset Correlation Matrix
+# These 27 assets form the expectation condensate measured by D_eff.
+# D_eff = -log(Σ λi²) / log(27)
+# Source: claude.md and skill.md SK-07
+
+# =============================================================================
+# ASSET UNIVERSE (N = 27)
+# =============================================================================
+
+assets:
+  # EQUITIES (6) — primary expectation field representations
+  equities:
+    - ticker: SPX
+      description: "S&P 500 Index"
+      asset_class: equity
+      region: US
+      yahoo_ticker: "^GSPC"
+      bloomberg_ticker: "SPX Index"
+
+    - ticker: NDX
+      description: "Nasdaq 100 Index"
+      asset_class: equity
+      region: US
+      yahoo_ticker: "^NDX"
+      bloomberg_ticker: "NDX Index"
+
+    - ticker: RUT
+      description: "Russell 2000 Small Cap"
+      asset_class: equity
+      region: US
+      yahoo_ticker: "^RUT"
+      bloomberg_ticker: "RTY Index"
+
+    - ticker: SXXP
+      description: "Stoxx Europe 600"
+      asset_class: equity
+      region: Europe
+      yahoo_ticker: "^STOXX"
+      bloomberg_ticker: "SXXP Index"
+
+    - ticker: NKY
+      description: "Nikkei 225"
+      asset_class: equity
+      region: Japan
+      yahoo_ticker: "^N225"
+      bloomberg_ticker: "NKY Index"
+
+    - ticker: MSCIEM
+      description: "MSCI Emerging Markets"
+      asset_class: equity
+      region: EM
+      yahoo_ticker: "EEM"
+      bloomberg_ticker: "MXEF Index"
+
+  # FIXED INCOME (5) — temporal structure of expectation condensate
+  fixed_income:
+    - ticker: US2Y
+      description: "US 2-Year Treasury Yield"
+      asset_class: fixed_income
+      region: US
+      yahoo_ticker: "^IRX"
+      bloomberg_ticker: "USGG2YR Index"
+
+    - ticker: US10Y
+      description: "US 10-Year Treasury Yield"
+      asset_class: fixed_income
+      region: US
+      yahoo_ticker: "^TNX"
+      bloomberg_ticker: "USGG10YR Index"
+
+    - ticker: US30Y
+      description: "US 30-Year Treasury Yield"
+      asset_class: fixed_income
+      region: US
+      yahoo_ticker: "^TYX"
+      bloomberg_ticker: "USGG30YR Index"
+
+    - ticker: BUND10Y
+      description: "German 10-Year Bund Yield"
+      asset_class: fixed_income
+      region: Europe
+      bloomberg_ticker: "GDBR10 Index"
+
+    - ticker: JGB10Y
+      description: "Japan 10-Year JGB Yield"
+      asset_class: fixed_income
+      region: Japan
+      bloomberg_ticker: "GJGB10 Index"
+
+  # CREDIT (4) — grain boundary stress indicators
+  credit:
+    - ticker: CDXIG
+      description: "CDX North America Investment Grade"
+      asset_class: credit
+      region: US
+      bloomberg_ticker: "CDX IG CDSI GEN 5Y Corp"
+
+    - ticker: CDXHY
+      description: "CDX North America High Yield"
+      asset_class: credit
+      region: US
+      bloomberg_ticker: "CDX HY CDSI GEN 5Y Corp"
+
+    - ticker: ITRAXXMAIN
+      description: "iTraxx Europe Main"
+      asset_class: credit
+      region: Europe
+      bloomberg_ticker: "ITRXEBE CBIN Curncy"
+
+    - ticker: ITRAXXCO
+      description: "iTraxx Europe Crossover"
+      asset_class: credit
+      region: Europe
+      bloomberg_ticker: "ITRXEXE CBIN Curncy"
+
+  # FX (5) — cross-condensate coupling
+  fx:
+    - ticker: DXY
+      description: "US Dollar Index"
+      asset_class: fx
+      yahoo_ticker: "DX-Y.NYB"
+      bloomberg_ticker: "DXY Curncy"
+
+    - ticker: EURUSD
+      description: "Euro / US Dollar"
+      asset_class: fx
+      yahoo_ticker: "EURUSD=X"
+      bloomberg_ticker: "EURUSD Curncy"
+
+    - ticker: USDJPY
+      description: "US Dollar / Japanese Yen"
+      asset_class: fx
+      yahoo_ticker: "USDJPY=X"
+      bloomberg_ticker: "USDJPY Curncy"
+
+    - ticker: GBPUSD
+      description: "British Pound / US Dollar"
+      asset_class: fx
+      yahoo_ticker: "GBPUSD=X"
+      bloomberg_ticker: "GBPUSD Curncy"
+
+    - ticker: AUDUSD
+      description: "Australian Dollar / US Dollar"
+      asset_class: fx
+      yahoo_ticker: "AUDUSD=X"
+      bloomberg_ticker: "AUDUSD Curncy"
+
+  # COMMODITIES (4) — acoustic sector cross-checks
+  commodities:
+    - ticker: GOLD
+      description: "Gold Spot Price"
+      asset_class: commodity
+      yahoo_ticker: "GC=F"
+      bloomberg_ticker: "XAU Curncy"
+
+    - ticker: CRUDE
+      description: "WTI Crude Oil Front Month"
+      asset_class: commodity
+      yahoo_ticker: "CL=F"
+      bloomberg_ticker: "CL1 Comdty"
+
+    - ticker: COPPER
+      description: "Copper Front Month"
+      asset_class: commodity
+      yahoo_ticker: "HG=F"
+      bloomberg_ticker: "HG1 Comdty"
+
+    - ticker: WHEAT
+      description: "CBOT Wheat Front Month"
+      asset_class: commodity
+      yahoo_ticker: "ZW=F"
+      bloomberg_ticker: "W 1 Comdty"
+
+  # VOLATILITY (3) — expectation condensate disorder indicators
+  volatility:
+    - ticker: VIX
+      description: "CBOE VIX (30-day implied vol)"
+      asset_class: volatility
+      yahoo_ticker: "^VIX"
+      bloomberg_ticker: "VIX Index"
+
+    - ticker: VVIX
+      description: "CBOE VVIX (vol-of-vol)"
+      asset_class: volatility
+      yahoo_ticker: "^VVIX"
+      bloomberg_ticker: "VVIX Index"
+
+    - ticker: MOVE
+      description: "ICE BofA MOVE Index (rates vol)"
+      asset_class: volatility
+      bloomberg_ticker: "MOVE Index"
+
+# =============================================================================
+# D_eff INTERPRETATION
+# =============================================================================
+d_eff_levels:
+  fully_diversified: 20.0    # D_eff > 20: normal diversified markets
+  normal: 10.0               # D_eff 10-20: healthy market conditions
+  compression: 6.0           # D_eff 6-10: correlation increasing
+  pre_crisis: 3.0            # D_eff 3-6: holographic saturation building
+  saturation: 1.0            # D_eff < 3: GUARDIAN trigger — crisis
+
+# Asset count for D_eff formula
+N: 27
