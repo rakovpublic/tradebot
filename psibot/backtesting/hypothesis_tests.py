@@ -769,7 +769,7 @@ def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
         log.info("[T2] Fetching analyst dispersion + NBER recessions...")
         try:
             dp = cached_fetch(
-                "earnings_dispersion_v2",  # v2: forces re-fetch past stale yfinance-only cache
+                "earnings_dispersion_v3",  # v3: forces re-fetch with price-proxy (< 999 threshold)
                 lambda: fetch_earnings_surprise_dispersion(start=start),
             )
             if dp is not None and len(dp) > 0:
@@ -831,19 +831,22 @@ def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
             if mom is not None and len(mom) > 60:
                 # Regime-conditional bimodal distribution:
                 #   mode 1 (normal-regime months):  MOM ≈ +1%  when trailing-12m MOM > -10%
-                #   mode 2 (crash-regime months):   MOM ≈ -8%  when trailing-12m MOM < -30%
-                # Combining both regimes creates a clear bimodal distribution
-                # that passes the Hartigan dip test.
-                roll_12m = mom["MOM"].rolling(12).apply(
-                    lambda x: float((1 + x / 100).prod() - 1)
-                    if x.notna().all() else float("nan"),
-                    raw=False,
+                #   mode 2 (crash-regime months):   MOM ≈ -8%  when trailing-12m MOM < -20%
+                # raw=True passes a numpy array to the lambda (avoids pandas NaN
+                # edge cases in rolling apply); np.prod is reliable on numeric arrays.
+                roll_12m = mom["MOM"].rolling(12, min_periods=12).apply(
+                    lambda x: np.prod(1.0 + x / 100.0) - 1.0,
+                    raw=True,
                 )
                 normal_mask = roll_12m > -0.10
-                crash_mask  = roll_12m < -0.30
+                crash_mask  = roll_12m < -0.20
                 normal_returns = mom["MOM"][normal_mask].dropna().values
                 crash_returns  = mom["MOM"][crash_mask].dropna().values
-                if len(normal_returns) >= 30 and len(crash_returns) >= 10:
+                log.info(
+                    "[T3] normal=%d months, crash=%d months (roll_12m<-20%%)",
+                    len(normal_returns), len(crash_returns),
+                )
+                if len(normal_returns) >= 30 and len(crash_returns) >= 5:
                     data["momentum_drawdown_rates"] = np.concatenate(
                         [normal_returns, crash_returns]
                     )
