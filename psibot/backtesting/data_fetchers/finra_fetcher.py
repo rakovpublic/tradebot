@@ -8,6 +8,7 @@ CCDR Expectation Field Architecture — Version 1.0
 """
 
 import io
+import json
 import logging
 from datetime import datetime, timedelta
 
@@ -39,6 +40,8 @@ def fetch_finra_ats_weekly(
     all_records = []
 
     base_url = "https://api.finra.org/data/group/otcMarket/name/weeklySummary"
+    # FINRA REST API requires filters as a JSON array (not the legacy compareFilters string)
+    _FINRA_HEADERS = {"Accept": "application/json"}
 
     for year in range(start_year, end_year + 1):
         try:
@@ -46,13 +49,17 @@ def fetch_finra_ats_weekly(
                 "limit": 52,
                 "offset": 0,
                 "fields": "weekStartDate,totalShares,totalTrades,issueSymbolIdentifier",
-                "compareFilters": (
-                    f"issueSymbolIdentifier:eq:{symbol},"
-                    f"weekStartDate:gte:{year}-01-01,"
-                    f"weekStartDate:lte:{year}-12-31"
-                ),
+                "filters": json.dumps([
+                    {"fieldName": "issueSymbolIdentifier",
+                     "fieldValue": symbol, "compareType": "EQUAL"},
+                    {"fieldName": "weekStartDate",
+                     "fieldValue": f"{year}-01-01", "compareType": "GREATER_THAN_OR_EQUAL"},
+                    {"fieldName": "weekStartDate",
+                     "fieldValue": f"{year}-12-31", "compareType": "LESS_THAN_OR_EQUAL"},
+                ]),
             }
-            resp = requests.get(base_url, params=params, timeout=30)
+            resp = requests.get(base_url, params=params, headers=_FINRA_HEADERS,
+                                timeout=30, allow_redirects=False)
 
             if resp.status_code == 200:
                 data = resp.json()

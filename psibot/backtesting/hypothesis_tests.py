@@ -281,12 +281,15 @@ class CCDRHypothesisTests:
 
             lead_days = []
             correct_direction = 0
+            checked_crises = 0  # only crises with sufficient pre-crisis data
 
             for crisis_date in crisis_dates:
                 # Get D_eff 60 days before crisis
                 pre_crisis = d_eff_series[d_eff_series.index < crisis_date].tail(60)
                 if len(pre_crisis) < 20:
                     continue
+
+                checked_crises += 1
 
                 # Check if D_eff was declining in the 60 days before
                 early = pre_crisis.head(20).mean()
@@ -308,7 +311,8 @@ class CCDRHypothesisTests:
                 return result
 
             median_lead = float(np.median(lead_days))
-            directional_acc = correct_direction / max(len(crisis_dates), 1)
+            # Divide by crises that actually had enough data to evaluate
+            directional_acc = correct_direction / max(checked_crises, 1)
 
             passed = (median_lead >= T4_LEAD_DAYS_MIN
                       and directional_acc >= T4_DIRECTIONAL_ACCURACY)
@@ -494,6 +498,10 @@ class CCDRHypothesisTests:
             threshold=T8_ACCURACY_THRESHOLD,
         )
         try:
+            if skew_series is None or next_regime_direction is None:
+                result.error = "Missing skew or regime direction data"
+                return result
+
             aligned = pd.DataFrame({
                 "skew": skew_series,
                 "regime": next_regime_direction,
@@ -961,12 +969,14 @@ def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
                     if len(earnings) < 3:
                         continue
 
-                    hist = yf.download(
+                    _raw_hist = yf.download(
                         ticker,
                         start=start,
                         progress=False,
                         auto_adjust=True,
                     )["Close"]
+                    # Newer yfinance may return a single-column DataFrame; squeeze to Series
+                    hist = _raw_hist.squeeze() if isinstance(_raw_hist, pd.DataFrame) else _raw_hist
                     if hist is None or len(hist) < 30:
                         continue
 
@@ -976,8 +986,8 @@ def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
                             after = hist[hist.index > dt].head(20)
                             if len(after) < 10:
                                 continue
-                            before_price = hist[hist.index <= dt].iloc[-1]
-                            drift_pct = (after.iloc[-1] - before_price) / before_price
+                            before_price = float(hist[hist.index <= dt].iloc[-1])
+                            drift_pct = float((after.iloc[-1] - before_price) / before_price)
                             # Dispersion proxy = |EPS surprise| / |EPS Estimate|
                             est = row["EPS Estimate"]
                             act = row["Reported EPS"]

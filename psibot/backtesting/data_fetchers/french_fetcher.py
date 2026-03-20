@@ -22,58 +22,60 @@ def _fetch_french_csv(dataset_name: str) -> pd.DataFrame:
     Download a Kenneth French Data Library zip, extract the CSV, and return
     the monthly factor returns as a DataFrame (decimal, DatetimeIndex).
 
-    The CSV format has a header section terminated by a blank line, then
-    monthly data rows, then another blank line before annual data.
+    French CSV files are comma-delimited:
+      - Several header/description lines (no leading digit in first comma-field)
+      - One column-header line: " ,Col1 ,Col2 ..."
+      - Monthly data rows: "YYYYMM , val1 , val2 ..."
+      - Blank line separating monthly from annual section
     """
     url = f"{_FRENCH_BASE}/{dataset_name}_CSV.zip"
     resp = requests.get(url, timeout=60)
     resp.raise_for_status()
 
     with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
-        csv_name = next(n for n in z.namelist() if n.endswith(".CSV") or n.endswith(".csv"))
+        csv_name = next(n for n in z.namelist() if n.upper().endswith(".CSV"))
         raw = z.read(csv_name).decode("utf-8", errors="replace")
 
     lines = raw.splitlines()
 
-    # Skip header comment lines (those that don't start with a digit or space+digit)
-    data_start = 0
+    # Locate the first data row: first comma-field is a 6-digit YYYYMM integer.
+    data_start = None
+    header_idx = None
     for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped and stripped[0].isdigit():
+        first_field = line.split(",")[0].strip()
+        if first_field.isdigit() and len(first_field) == 6:
             data_start = i
+            # Column header is the last non-blank line before data_start
+            for j in range(i - 1, -1, -1):
+                candidate = lines[j].strip()
+                if candidate:
+                    header_idx = j
+                    break
             break
 
-    # Collect monthly rows: stop at first blank line after data starts
-    data_lines = []
-    for line in lines[data_start:]:
-        stripped = line.strip()
-        if not stripped:
-            break  # end of monthly section
-        data_lines.append(stripped)
-
-    if not data_lines:
+    if data_start is None:
         raise ValueError(f"No data rows found in {dataset_name}")
 
-    # Parse: first token is YYYYMM date, rest are factor columns
-    header_line = None
-    # Find the header row just above data_start (a line with column names)
-    for i in range(data_start - 1, max(data_start - 5, -1), -1):
-        candidate = lines[i].strip()
-        if candidate and not candidate[0].isdigit():
-            header_line = candidate
-            break
+    # Parse column names from header line
+    if header_idx is not None:
+        raw_cols = [c.strip() for c in lines[header_idx].split(",")]
+        # First element is empty (date column placeholder); skip it
+        col_names = [c for c in raw_cols if c]
+    else:
+        col_names = []
 
+    # Parse monthly data rows until blank line (= start of annual section)
     rows = []
-    for line in data_lines:
-        parts = line.split()
-        if len(parts) < 2:
-            continue
+    for line in lines[data_start:]:
+        parts = [p.strip() for p in line.split(",")]
+        if not parts or not parts[0]:
+            break  # blank line → end of monthly section
         try:
             date_int = int(parts[0])
             year, month = date_int // 100, date_int % 100
             if not (1 <= month <= 12):
                 continue
-            values = [float(v) for v in parts[1:]]
+            values = [float(v) for v in parts[1:] if v]
             rows.append((pd.Timestamp(year=year, month=month, day=1), values))
         except (ValueError, TypeError):
             continue
@@ -82,10 +84,8 @@ def _fetch_french_csv(dataset_name: str) -> pd.DataFrame:
         raise ValueError(f"Failed to parse any rows from {dataset_name}")
 
     n_cols = len(rows[0][1])
-    if header_line:
-        col_names = header_line.split()[-n_cols:] if header_line else [f"F{i}" for i in range(n_cols)]
-    else:
-        col_names = [f"F{i}" for i in range(n_cols)]
+    if len(col_names) < n_cols:
+        col_names = col_names + [f"F{i}" for i in range(len(col_names), n_cols)]
 
     dates = [r[0] for r in rows]
     values = [r[1] for r in rows]

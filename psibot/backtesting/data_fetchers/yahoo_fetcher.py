@@ -74,7 +74,12 @@ def fetch_asset_universe_prices(start: str = "2000-01-01") -> pd.DataFrame:
     else:
         close = raw[["Close"]] if "Close" in raw.columns else raw
 
-    reverse_map = {v: k for k, v in YAHOO_MAP.items()}
+    # Build reverse map; also handle tickers returned without the leading ^ (yfinance versions vary)
+    reverse_map = {}
+    for k, v in YAHOO_MAP.items():
+        reverse_map[v] = k
+        if v.startswith("^"):
+            reverse_map[v[1:]] = k  # e.g. "GSPC" → "SPX" fallback
     close = close.rename(columns=reverse_map)
     close = close.dropna(how="all")
 
@@ -122,16 +127,48 @@ def fetch_earnings_surprise_dispersion(
         except Exception:
             continue
 
-    if not records:
-        return pd.DataFrame()
+    monthly_dp = pd.DataFrame()
+    if records:
+        all_surprises = pd.concat(records)
+        all_surprises.index = pd.to_datetime(all_surprises.index).tz_localize(None)
+        monthly_dp = (
+            all_surprises.groupby(pd.Grouper(freq="ME"))["surprise_pct"]
+            .std()
+            .to_frame(name="dp_proxy")
+            .dropna()
+        )
+        monthly_dp = monthly_dp[monthly_dp.index >= start]
 
-    all_surprises = pd.concat(records)
-    all_surprises.index = pd.to_datetime(all_surprises.index).tz_localize(None)
+    # yfinance earnings_dates only returns ~2 years of history, giving too few
+    # monthly observations for T2 (needs ≥100). Fall back to cross-sectional
+    # return dispersion across the same basket — a well-known dispersion proxy
+    # that spans the full requested history.
+    if len(monthly_dp) < 60:
+        log.info("Earnings-based DP too short (%d obs); using price-dispersion proxy", len(monthly_dp))
+        try:
+            price_tickers = [t for t in tickers if t in (
+                "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "JPM",
+                "JNJ", "V", "PG", "UNH", "HD", "BAC", "XOM", "KO", "WMT",
+                "DIS", "CSCO", "INTC", "GS", "MS", "WFC", "C",
+            )]
+            prices_raw = yf.download(
+                price_tickers,
+                start=start,
+                auto_adjust=True,
+                progress=False,
+                threads=True,
+            )
+            if isinstance(prices_raw.columns, pd.MultiIndex):
+                prices_close = prices_raw["Close"]
+            else:
+                prices_close = prices_raw
 
-    monthly_dp = (
-        all_surprises.groupby(pd.Grouper(freq="ME"))["surprise_pct"]
-        .std()
-        .to_frame(name="dp_proxy")
-        .dropna()
-    )
-    return monthly_dp[monthly_dp.index >= start]
+            monthly_ret = prices_close.resample("ME").last().pct_change()
+            cross_sec_std = monthly_ret.std(axis=1).dropna().to_frame(name="dp_proxy")
+            cross_sec_std = cross_sec_std[cross_sec_std.index >= start]
+            if len(cross_sec_std) > len(monthly_dp):
+                monthly_dp = cross_sec_std
+        except Exception as exc:
+            log.warning("Price-dispersion proxy failed: %s", exc)
+
+    return monthly_dp
