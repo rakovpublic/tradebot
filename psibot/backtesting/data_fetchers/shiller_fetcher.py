@@ -28,12 +28,31 @@ def fetch_shiller_data() -> pd.DataFrame:
         price, dividend, earnings, cpi, long_rate, real_price,
         real_dividend, real_tr_price, real_earnings, cape
     """
-    # Yale serves the file over HTTP (redirects to HTTPS); follow redirect explicitly.
-    url = "http://www.econ.yale.edu/~shiller/data/ie_data.xls"
-    resp = requests.get(url, timeout=60, allow_redirects=True)
-    resp.raise_for_status()
+    # Try multiple known Shiller data URLs (Yale occasionally moves the file).
+    _SHILLER_URLS = [
+        "http://www.econ.yale.edu/~shiller/data/ie_data.xls",
+        "https://shiller.yale.edu/stock/ie_data.xls",
+        "http://www.econ.yale.edu/~shiller/data/ie_data.xlsx",
+    ]
+    content = None
+    for url in _SHILLER_URLS:
+        try:
+            resp = requests.get(url, timeout=60, allow_redirects=True)
+            resp.raise_for_status()
+            # Sanity-check: Yale sometimes returns an HTML error page
+            if resp.content[:4] in (b"\xd0\xcf\x11\xe0", b"PK\x03\x04"):
+                # Valid XLS (OLE2) or XLSX (ZIP) magic bytes
+                content = io.BytesIO(resp.content)
+                break
+            # Fallback: try parsing even without magic byte check
+            content = io.BytesIO(resp.content)
+            break
+        except Exception:
+            continue
 
-    content = io.BytesIO(resp.content)
+    if content is None:
+        raise RuntimeError("Could not download Shiller ie_data from any known URL")
+
     # xlrd ≥2.0 dropped .xls support; try xlrd first then openpyxl as fallback.
     df = None
     for engine in ("xlrd", "openpyxl"):
