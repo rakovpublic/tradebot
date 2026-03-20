@@ -834,8 +834,10 @@ def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
                 #   mode 2 (crash-regime months):   MOM ≈ -8%  when trailing-12m MOM < -20%
                 # raw=True passes a numpy array to the lambda (avoids pandas NaN
                 # edge cases in rolling apply); np.prod is reliable on numeric arrays.
+                # MOM is already in decimal (fetch_momentum_factor divides by 100),
+                # so use (1 + x) directly — no further /100 needed.
                 roll_12m = mom["MOM"].rolling(12, min_periods=12).apply(
-                    lambda x: np.prod(1.0 + x / 100.0) - 1.0,
+                    lambda x: np.prod(1.0 + x) - 1.0,
                     raw=True,
                 )
                 normal_mask = roll_12m > -0.10
