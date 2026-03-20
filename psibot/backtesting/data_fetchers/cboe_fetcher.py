@@ -11,6 +11,16 @@ import io
 import requests
 import pandas as pd
 
+# CBOE CDN blocks requests that lack a browser-like User-Agent (returns 403).
+_CBOE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Referer": "https://www.cboe.com/",
+}
+
 
 def fetch_vix_history(start: str = "1990-01-02") -> pd.DataFrame:
     """
@@ -23,7 +33,7 @@ def fetch_vix_history(start: str = "1990-01-02") -> pd.DataFrame:
     Returns DataFrame: index=Date, columns=['VIX']
     """
     url = "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
-    resp = requests.get(url, timeout=30)
+    resp = requests.get(url, headers=_CBOE_HEADERS, timeout=30)
     resp.raise_for_status()
 
     df = pd.read_csv(io.StringIO(resp.text))
@@ -45,7 +55,7 @@ def fetch_skew_history(start: str = "1990-01-02") -> pd.DataFrame:
     Source: https://cdn.cboe.com/api/global/us_indices/daily_prices/SKEW_History.csv
     """
     url = "https://cdn.cboe.com/api/global/us_indices/daily_prices/SKEW_History.csv"
-    resp = requests.get(url, timeout=30)
+    resp = requests.get(url, headers=_CBOE_HEADERS, timeout=30)
     resp.raise_for_status()
     df = pd.read_csv(io.StringIO(resp.text))
     df.columns = df.columns.str.strip().str.upper()
@@ -61,7 +71,7 @@ def fetch_vix9d_history(start: str = "2011-01-01") -> pd.DataFrame:
     Source: https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX9D_History.csv
     """
     url = "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX9D_History.csv"
-    resp = requests.get(url, timeout=30)
+    resp = requests.get(url, headers=_CBOE_HEADERS, timeout=30)
     resp.raise_for_status()
     df = pd.read_csv(io.StringIO(resp.text))
     df.columns = df.columns.str.strip().str.upper()

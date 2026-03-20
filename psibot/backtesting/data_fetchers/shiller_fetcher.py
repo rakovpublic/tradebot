@@ -28,19 +28,33 @@ def fetch_shiller_data() -> pd.DataFrame:
         price, dividend, earnings, cpi, long_rate, real_price,
         real_dividend, real_tr_price, real_earnings, cape
     """
+    # Yale serves the file over HTTP (redirects to HTTPS); follow redirect explicitly.
     url = "http://www.econ.yale.edu/~shiller/data/ie_data.xls"
-    resp = requests.get(url, timeout=60)
+    resp = requests.get(url, timeout=60, allow_redirects=True)
     resp.raise_for_status()
 
-    df = pd.read_excel(
-        io.BytesIO(resp.content),
-        sheet_name="Data",
-        header=7,           # Row 8 (0-indexed = 7) is the header
-        usecols="A:P",
-    )
+    content = io.BytesIO(resp.content)
+    # xlrd ≥2.0 dropped .xls support; try xlrd first then openpyxl as fallback.
+    df = None
+    for engine in ("xlrd", "openpyxl"):
+        try:
+            df = pd.read_excel(
+                content,
+                sheet_name="Data",
+                header=7,
+                usecols="A:P",
+                engine=engine,
+            )
+            break
+        except Exception:
+            content.seek(0)  # reset buffer for next attempt
+            continue
+    if df is None:
+        raise RuntimeError("Could not read Shiller ie_data.xls with xlrd or openpyxl")
 
     df.columns = df.columns.str.strip()
-    df = df.rename(columns={
+    # Shiller occasionally renames columns; handle common variants
+    rename_map = {
         "Date": "date_raw",
         "P": "price",
         "D": "dividend",
@@ -52,7 +66,10 @@ def fetch_shiller_data() -> pd.DataFrame:
         "Real TR Price": "real_tr_price",
         "Real Earnings": "real_earnings",
         "P/E10 or CAPE": "cape",
-    })
+        "CAPE": "cape",          # alternate name
+        "Cyclically Adjusted Price/Earnings Ratio": "cape",
+    }
+    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
     def decimal_to_date(d):
         try:
