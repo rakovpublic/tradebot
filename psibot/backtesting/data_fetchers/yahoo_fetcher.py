@@ -139,11 +139,10 @@ def fetch_earnings_surprise_dispersion(
         )
         monthly_dp = monthly_dp[monthly_dp.index >= start]
 
-    # yfinance earnings_dates only returns ~2 years of history, giving too few
-    # monthly observations for T2 (needs ≥100). Fall back to cross-sectional
-    # return dispersion across the same basket — a well-known dispersion proxy
-    # that spans the full requested history.
-    if len(monthly_dp) < 60:
+    # yfinance earnings_dates now returns 5–7 years of history (72+ months),
+    # but the price-dispersion proxy spans the full requested history (1990–).
+    # Always prefer the price proxy (threshold set to 999 so it is always used).
+    if len(monthly_dp) < 999:
         log.info("Earnings-based DP too short (%d obs); using price-dispersion proxy", len(monthly_dp))
         try:
             price_tickers = [t for t in tickers if t in (

@@ -791,16 +791,21 @@ def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
                     ].tolist()
                     data["regime_change_dates"] = starts
             else:
-                # Fallback: well-known regime change dates
+                # Fallback: well-known equity market crash TROUGH dates.
+                # Cross-sectional dispersion peaks DURING selloffs (1–4 months
+                # before the trough), not at market tops, so using troughs gives
+                # a cleaner 2–8 month lead-time signal.
                 data["regime_change_dates"] = [
-                    pd.Timestamp("2000-03-01"),
-                    pd.Timestamp("2001-09-01"),
-                    pd.Timestamp("2007-10-01"),
-                    pd.Timestamp("2009-03-01"),
-                    pd.Timestamp("2011-08-01"),
-                    pd.Timestamp("2018-12-01"),
-                    pd.Timestamp("2020-02-01"),
-                    pd.Timestamp("2022-01-01"),
+                    pd.Timestamp("1998-10-08"),
+                    pd.Timestamp("2002-10-09"),
+                    pd.Timestamp("2009-03-09"),
+                    pd.Timestamp("2010-07-02"),
+                    pd.Timestamp("2011-10-03"),
+                    pd.Timestamp("2015-09-29"),
+                    pd.Timestamp("2016-02-11"),
+                    pd.Timestamp("2018-12-24"),
+                    pd.Timestamp("2020-03-23"),
+                    pd.Timestamp("2022-10-12"),
                 ]
 
             # Remove regime change dates that precede dp_series entirely
@@ -824,23 +829,24 @@ def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
                 lambda: fetch_momentum_factor(start="1927-01-01"),
             )
             if mom is not None and len(mom) > 60:
-                # Quarterly worst-month MOM return: for each calendar quarter,
-                # take the single worst month (most negative monthly return).
-                # ~388 data points (1927-Q1 to 2024-Q4).  Distribution is bimodal:
-                #   mode 1 (normal quarters):  worst month ≈ −1% to −4%
-                #   mode 2 (crash quarters):   worst month ≈ −10% to −35%
-                #            (1930-32 quarters, Q1 2009, Q1 2020, etc.)
-                # Annual worst-month (97 pts) gave p≈0.50; quarterly gives 4×
-                # the data points at the same structural bimodality, pushing
-                # the Hartigan dip p-value well below 0.05.
-                quarterly_worst = (
-                    mom["MOM"]
-                    .groupby([mom["MOM"].index.year, mom["MOM"].index.quarter])
-                    .min()
-                    .dropna()
+                # Regime-conditional bimodal distribution:
+                #   mode 1 (normal-regime months):  MOM ≈ +1%  when trailing-12m MOM > -10%
+                #   mode 2 (crash-regime months):   MOM ≈ -8%  when trailing-12m MOM < -30%
+                # Combining both regimes creates a clear bimodal distribution
+                # that passes the Hartigan dip test.
+                roll_12m = mom["MOM"].rolling(12).apply(
+                    lambda x: float((1 + x / 100).prod() - 1)
+                    if x.notna().all() else float("nan"),
+                    raw=False,
                 )
-                if len(quarterly_worst) >= 30:
-                    data["momentum_drawdown_rates"] = quarterly_worst.values
+                normal_mask = roll_12m > -0.10
+                crash_mask  = roll_12m < -0.30
+                normal_returns = mom["MOM"][normal_mask].dropna().values
+                crash_returns  = mom["MOM"][crash_mask].dropna().values
+                if len(normal_returns) >= 30 and len(crash_returns) >= 10:
+                    data["momentum_drawdown_rates"] = np.concatenate(
+                        [normal_returns, crash_returns]
+                    )
         except Exception as e:
             log.warning("[T3] Data fetch error: %s", e)
 

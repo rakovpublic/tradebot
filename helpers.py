@@ -260,7 +260,10 @@ def compute_d_eff(returns_matrix: np.ndarray) -> float:
     eigenvalues = eigenvalues / eigenvalues.sum()
 
     sum_sq = float(np.sum(eigenvalues**2))
-    d_eff = -np.log(sum_sq) / np.log(N)
+    # D_eff = Hill number D₂ = 1/Σλᵢ² — gives range [1, N] correctly.
+    # (Old formula -log(Σλᵢ²)/log(N) produces values in (0,1] which always
+    # clip to 1.0, making every detrended value exactly 0.0.)
+    d_eff = 1.0 / sum_sq
     return float(np.clip(d_eff, 1.0, float(N)))
 
 
