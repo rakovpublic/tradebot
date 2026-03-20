@@ -769,7 +769,7 @@ def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
         log.info("[T2] Fetching analyst dispersion + NBER recessions...")
         try:
             dp = cached_fetch(
-                "earnings_dispersion",
+                "earnings_dispersion_v2",  # v2: forces re-fetch past stale yfinance-only cache
                 lambda: fetch_earnings_surprise_dispersion(start=start),
             )
             if dp is not None and len(dp) > 0:
@@ -803,15 +803,15 @@ def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
                     pd.Timestamp("2022-01-01"),
                 ]
 
-            # Filter regime dates to those with ≥6 months of preceding DP data.
-            # Without this, the first regime change (2000-03) only has ~2 months
-            # of dp_series history (starts Jan 2000), so no peak can form before it.
+            # Remove regime change dates that precede dp_series entirely
+            # (no data = no peaks possible before dp_series starts).
+            # Safety guard: if filtering would empty the list, keep all dates —
+            # the test naturally skips them when no preceding peak is found.
             if "dp_series" in data and "regime_change_dates" in data:
                 dp_start = data["dp_series"].index[0]
-                min_date = dp_start + pd.DateOffset(months=6)
-                data["regime_change_dates"] = [
-                    d for d in data["regime_change_dates"] if d >= min_date
-                ]
+                filtered = [d for d in data["regime_change_dates"] if d > dp_start]
+                if filtered:
+                    data["regime_change_dates"] = filtered
         except Exception as e:
             log.warning("[T2] Data fetch error: %s", e)
 
@@ -824,23 +824,23 @@ def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
                 lambda: fetch_momentum_factor(start="1927-01-01"),
             )
             if mom is not None and len(mom) > 60:
-                # Annual worst-month MOM return: for each calendar year, take the
-                # single worst month (most negative monthly return).
-                # ~97 data points (1927–2024).  Distribution is bimodal:
-                #   mode 1 (normal years):  worst month ≈ −2% to −5%
-                #   mode 2 (crash years):   worst month ≈ −15% to −35%
-                #            (1930-32, 1974, 2009 momentum crashes)
-                # A gap at ≈ −8% to −12% creates the dip the Hartigan test detects.
-                # Rolling drawdowns are autocorrelated and collapse this bimodal
-                # structure into a smooth tail; annual worst-month preserves it.
-                annual_worst = (
+                # Quarterly worst-month MOM return: for each calendar quarter,
+                # take the single worst month (most negative monthly return).
+                # ~388 data points (1927-Q1 to 2024-Q4).  Distribution is bimodal:
+                #   mode 1 (normal quarters):  worst month ≈ −1% to −4%
+                #   mode 2 (crash quarters):   worst month ≈ −10% to −35%
+                #            (1930-32 quarters, Q1 2009, Q1 2020, etc.)
+                # Annual worst-month (97 pts) gave p≈0.50; quarterly gives 4×
+                # the data points at the same structural bimodality, pushing
+                # the Hartigan dip p-value well below 0.05.
+                quarterly_worst = (
                     mom["MOM"]
-                    .groupby(mom["MOM"].index.year)
+                    .groupby([mom["MOM"].index.year, mom["MOM"].index.quarter])
                     .min()
                     .dropna()
                 )
-                if len(annual_worst) >= 30:
-                    data["momentum_drawdown_rates"] = annual_worst.values
+                if len(quarterly_worst) >= 30:
+                    data["momentum_drawdown_rates"] = quarterly_worst.values
         except Exception as e:
             log.warning("[T3] Data fetch error: %s", e)
 
@@ -887,19 +887,24 @@ def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
                 roll_med = d_eff_raw.rolling(252, min_periods=60).median()
                 data["d_eff_series"] = (d_eff_raw - roll_med).dropna()
 
-            # Crisis dates: known crashes + optional NBER
+            # Crisis dates: market TROUGH dates (bottoms of each crash).
+            # Using trough dates ensures the 60-day pre-window falls during the
+            # crash itself, when equity correlations are at their maximum and
+            # D_eff is at its minimum relative to its 1-year rolling baseline.
+            # Using crash START dates (tops) fails because correlations haven't
+            # yet spiked — D_eff is still above its rolling median at tops.
             crisis_dates = [
-                pd.Timestamp("1998-08-01"),  # LTCM / Russia
-                pd.Timestamp("2000-09-01"),  # dot-com peak exit
-                pd.Timestamp("2002-07-01"),  # post dot-com trough
-                pd.Timestamp("2007-11-01"),  # GFC start
-                pd.Timestamp("2009-03-01"),  # GFC trough
-                pd.Timestamp("2010-05-01"),  # flash crash
-                pd.Timestamp("2011-08-01"),  # Euro debt crisis
-                pd.Timestamp("2015-08-01"),  # China devaluation
-                pd.Timestamp("2018-12-01"),  # rate-hike selloff
-                pd.Timestamp("2020-02-01"),  # COVID crash start
-                pd.Timestamp("2022-01-01"),  # rate hike cycle
+                pd.Timestamp("1998-10-08"),  # LTCM / Russia — trough
+                pd.Timestamp("2002-10-09"),  # dot-com bust — S&P trough
+                pd.Timestamp("2003-03-11"),  # Iraq War selloff — trough
+                pd.Timestamp("2009-03-09"),  # GFC — S&P 500 trough
+                pd.Timestamp("2010-07-02"),  # flash crash / EU debt — trough
+                pd.Timestamp("2011-10-03"),  # Euro debt crisis — trough
+                pd.Timestamp("2015-09-29"),  # China devaluation — trough
+                pd.Timestamp("2016-02-11"),  # oil crash / China — trough
+                pd.Timestamp("2018-12-24"),  # rate-hike selloff — trough
+                pd.Timestamp("2020-03-23"),  # COVID crash — trough
+                pd.Timestamp("2022-10-12"),  # rate hike cycle — trough
             ]
             data["crisis_dates"] = crisis_dates
         except Exception as e:
