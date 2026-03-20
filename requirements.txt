@@ -38,5 +38,13 @@ ib_insync>=0.9.70         # Interactive Brokers TWS API via IB Gateway (Phase 3)
 # prometheus-client>=0.17.0
 # grafana-api>=1.0.3
 
-# Optional: data feeds (Phase 1+)
-# yfinance>=0.2.28        # for development/testing only
+# Data feeds (Phase 0 backtesting — required for hypothesis tests)
+yfinance>=0.2.28
+pandas-datareader>=0.10.0  # Fama-French data (T3, T9)
+fredapi>=0.5.0             # FRED macroeconomic data (T2, T4, T6) — requires FRED_API_KEY
+openpyxl>=3.1.0            # Shiller Excel download (T6)
+requests>=2.31.0           # CBOE + FINRA HTTP fetchers (T1, T5, T8)
+pyarrow>=12.0.0            # parquet cache for data fetchers
+
+# Optional: improved bimodality test for T3
+# diptest>=0.4.0           # install separately: pip install diptest

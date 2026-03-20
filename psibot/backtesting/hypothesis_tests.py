@@ -672,3 +672,488 @@ class CCDRHypothesisTests:
         log.info("\n%s", report.summary())
 
         return report
+
+
+# ===========================================================================
+# __main__ RUNNER
+# ===========================================================================
+
+def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
+    """
+    Fetch all required data from the data fetchers and assemble into the
+    dict expected by CCDRHypothesisTests.run_all().
+    Failures in individual fetchers are caught and logged; downstream tests
+    will receive None / empty arrays and return errors gracefully.
+    """
+    import os
+    from psibot.backtesting.data_fetchers import cached_fetch
+    from psibot.backtesting.data_fetchers.cboe_fetcher import (
+        fetch_vix_history, fetch_skew_history,
+    )
+    from psibot.backtesting.data_fetchers.yahoo_fetcher import (
+        fetch_asset_universe_prices, fetch_earnings_surprise_dispersion,
+    )
+    from psibot.backtesting.data_fetchers.french_fetcher import fetch_momentum_factor
+    from psibot.backtesting.data_fetchers.shiller_fetcher import fetch_shiller_data
+    from psibot.backtesting.data_fetchers.finra_fetcher import fetch_finra_ats_weekly
+
+    data: dict = {}
+    fred_available = bool(os.environ.get("FRED_API_KEY", ""))
+
+    # --- T1: VIX changes → price changes (Granger causality) ----------------
+    if not tests or "T1" in tests:
+        log.info("[T1] Fetching VIX + SPX prices...")
+        try:
+            vix = cached_fetch("vix_history", lambda: fetch_vix_history(start=start))
+            prices = cached_fetch(
+                "asset_universe",
+                lambda: fetch_asset_universe_prices(start=start),
+            )
+            if vix is not None and len(vix) > 200:
+                data["vol_changes"] = vix["VIX"].pct_change().dropna().values
+            if prices is not None and "SPX" in prices.columns:
+                data["price_changes"] = prices["SPX"].pct_change().dropna().values
+                # Align lengths
+                n = min(len(data.get("vol_changes", [])),
+                        len(data.get("price_changes", [])))
+                if n > 0:
+                    data["vol_changes"] = data["vol_changes"][-n:]
+                    data["price_changes"] = data["price_changes"][-n:]
+        except Exception as e:
+            log.warning("[T1] Data fetch error: %s", e)
+
+    # --- T2: Analyst dispersion + regime change dates -----------------------
+    if not tests or "T2" in tests:
+        log.info("[T2] Fetching analyst dispersion + NBER recessions...")
+        try:
+            dp = cached_fetch(
+                "earnings_dispersion",
+                lambda: fetch_earnings_surprise_dispersion(start=start),
+            )
+            if dp is not None and len(dp) > 0:
+                data["dp_series"] = dp["dp_proxy"]
+
+            if fred_available:
+                from psibot.backtesting.data_fetchers.fred_fetcher import (
+                    fetch_nber_recession_dates,
+                )
+                rec = cached_fetch(
+                    "nber_recessions",
+                    lambda: fetch_nber_recession_dates(start=start),
+                )
+                if rec is not None and len(rec) > 0:
+                    # Regime change = start of each recession
+                    rec_monthly = rec.resample("ME").last()
+                    starts = rec_monthly.index[
+                        (rec_monthly["recession"].diff() == 1)
+                    ].tolist()
+                    data["regime_change_dates"] = starts
+            else:
+                # Fallback: well-known regime change dates
+                data["regime_change_dates"] = [
+                    pd.Timestamp("2000-03-01"),
+                    pd.Timestamp("2001-09-01"),
+                    pd.Timestamp("2007-10-01"),
+                    pd.Timestamp("2009-03-01"),
+                    pd.Timestamp("2011-08-01"),
+                    pd.Timestamp("2018-12-01"),
+                    pd.Timestamp("2020-02-01"),
+                    pd.Timestamp("2022-01-01"),
+                ]
+        except Exception as e:
+            log.warning("[T2] Data fetch error: %s", e)
+
+    # --- T3: Momentum factor drawdown rates (bimodality test) ---------------
+    if not tests or "T3" in tests:
+        log.info("[T3] Fetching Fama-French momentum factor...")
+        try:
+            mom = cached_fetch(
+                "momentum_factor",
+                lambda: fetch_momentum_factor(start=start),
+            )
+            if mom is not None and len(mom) > 60:
+                # Compute rolling 12-month drawdowns from monthly MOM returns
+                cum = (1 + mom["MOM"]).cumprod()
+                roll_max = cum.rolling(12, min_periods=1).max()
+                drawdowns = ((cum - roll_max) / roll_max).dropna()
+                # Use only drawdown events (negative months in momentum crashes)
+                crash_months = drawdowns[drawdowns < -0.05].values
+                if len(crash_months) >= 30:
+                    data["momentum_drawdown_rates"] = crash_months
+                else:
+                    data["momentum_drawdown_rates"] = drawdowns.values
+        except Exception as e:
+            log.warning("[T3] Data fetch error: %s", e)
+
+    # --- T4: D_eff series + crisis dates ------------------------------------
+    if not tests or "T4" in tests:
+        log.info("[T4] Computing rolling D_eff from asset universe...")
+        try:
+            prices = data.get("_prices") or cached_fetch(
+                "asset_universe",
+                lambda: fetch_asset_universe_prices(start=start),
+            )
+            if prices is not None and len(prices) > 100:
+                data["_prices"] = prices  # reuse across tests
+                log_ret = np.log(prices / prices.shift(1)).dropna()
+                # Drop columns with >10% NaN
+                log_ret = log_ret.dropna(axis=1, thresh=int(len(log_ret) * 0.9))
+                log_ret = log_ret.fillna(0.0)
+
+                window = 60
+                d_eff_vals = []
+                d_eff_dates = []
+                for i in range(window, len(log_ret)):
+                    chunk = log_ret.iloc[i - window:i].values
+                    from helpers import compute_d_eff as _compute_d_eff
+                    d_eff_vals.append(_compute_d_eff(chunk))
+                    d_eff_dates.append(log_ret.index[i])
+
+                data["d_eff_series"] = pd.Series(d_eff_vals, index=d_eff_dates)
+
+            # Crisis dates: known crashes + optional NBER
+            crisis_dates = [
+                pd.Timestamp("1998-08-01"),  # LTCM / Russia
+                pd.Timestamp("2000-09-01"),  # dot-com peak exit
+                pd.Timestamp("2002-07-01"),  # post dot-com trough
+                pd.Timestamp("2007-11-01"),  # GFC start
+                pd.Timestamp("2009-03-01"),  # GFC trough
+                pd.Timestamp("2010-05-01"),  # flash crash
+                pd.Timestamp("2011-08-01"),  # Euro debt crisis
+                pd.Timestamp("2015-08-01"),  # China devaluation
+                pd.Timestamp("2018-12-01"),  # rate-hike selloff
+                pd.Timestamp("2020-02-01"),  # COVID crash start
+                pd.Timestamp("2022-01-01"),  # rate hike cycle
+            ]
+            data["crisis_dates"] = crisis_dates
+        except Exception as e:
+            log.warning("[T4] Data fetch error: %s", e)
+
+    # --- T5: Dark pool fraction + SPY returns --------------------------------
+    if not tests or "T5" in tests:
+        log.info("[T5] Fetching FINRA ATS dark pool data...")
+        try:
+            dp_finra = cached_fetch(
+                "finra_ats_spy",
+                lambda: fetch_finra_ats_weekly(
+                    start_year=max(2014, int(start[:4])),
+                    symbol="SPY",
+                ),
+            )
+            if dp_finra is not None and len(dp_finra) >= 100:
+                prices_spy = data.get("_prices")
+                if prices_spy is not None and "SPX" in prices_spy.columns:
+                    spy_weekly = (
+                        prices_spy["SPX"]
+                        .resample("W-MON")
+                        .last()
+                        .pct_change()
+                        .dropna()
+                    )
+                    data["dark_pool_fractions"] = dp_finra["dark_pool_fraction"]
+                    data["next_day_returns"] = spy_weekly
+            else:
+                log.warning("[T5] Insufficient FINRA data — T5 will error gracefully")
+        except Exception as e:
+            log.warning("[T5] Data fetch error: %s", e)
+
+    # --- T6: Equity risk premium spectral analysis --------------------------
+    if not tests or "T6" in tests:
+        log.info("[T6] Fetching Shiller data for equity risk premium...")
+        try:
+            shiller = cached_fetch("shiller_data", fetch_shiller_data)
+            if shiller is not None and len(shiller) > 120:
+                shiller = shiller.dropna(subset=["cape", "long_rate"])
+                # ERP = earnings yield (1/CAPE) - 10Y real yield
+                erp = (1.0 / shiller["cape"]) - (shiller["long_rate"] / 100.0)
+                erp = erp.dropna()
+                if start:
+                    erp = erp[erp.index >= start]
+                data["equity_risk_premium"] = erp
+        except Exception as e:
+            log.warning("[T6] Data fetch error: %s", e)
+
+    # --- T7: Technical levels survive participant turnover ------------------
+    if not tests or "T7" in tests:
+        log.info("[T7] Deriving technical S&P 500 levels...")
+        try:
+            prices_t7 = data.get("_prices") or cached_fetch(
+                "asset_universe",
+                lambda: fetch_asset_universe_prices(start=start),
+            )
+            if prices_t7 is not None and "SPX" in prices_t7.columns:
+                spx = prices_t7["SPX"].dropna()
+                # Use 52-week highs and lows around known transition points
+                transition_dates = [
+                    pd.Timestamp("2007-10-01"),
+                    pd.Timestamp("2009-03-01"),
+                    pd.Timestamp("2020-02-01"),
+                    pd.Timestamp("2022-01-01"),
+                ]
+                pre_levels = []
+                for td in transition_dates:
+                    pre = spx[spx.index < td].tail(252)
+                    if len(pre) > 0:
+                        pre_levels.extend([
+                            float(pre.max()),
+                            float(pre.min()),
+                            float(pre.mean()),
+                        ])
+
+                # Post-transition: prices 1–3 years after last transition
+                last_td = transition_dates[-1]
+                post_prices = spx[spx.index > last_td]
+                if len(pre_levels) > 0 and len(post_prices) > 50:
+                    data["pre_transition_levels"] = pre_levels
+                    data["post_transition_prices"] = post_prices
+        except Exception as e:
+            log.warning("[T7] Data fetch error: %s", e)
+
+    # --- T8: CBOE SKEW + regime direction -----------------------------------
+    if not tests or "T8" in tests:
+        log.info("[T8] Fetching CBOE SKEW + deriving regime direction...")
+        try:
+            skew_df = cached_fetch(
+                "cboe_skew",
+                lambda: fetch_skew_history(start=start),
+            )
+            if skew_df is not None and len(skew_df) > 100:
+                # Normalise SKEW: centre around 100, higher = more negative skew
+                skew_norm = (skew_df["SKEW"] - 100.0) / 10.0
+
+                prices_t8 = data.get("_prices") or cached_fetch(
+                    "asset_universe",
+                    lambda: fetch_asset_universe_prices(start=start),
+                )
+                if prices_t8 is not None and "SPX" in prices_t8.columns:
+                    spx = prices_t8["SPX"].dropna()
+                    # Regime direction = sign of 6-month forward return
+                    fwd_6m = spx.pct_change(126).shift(-126).dropna()
+                    regime_dir = fwd_6m.apply(np.sign)
+                    data["skew_series"] = skew_norm
+                    data["next_regime_direction"] = regime_dir
+        except Exception as e:
+            log.warning("[T8] Data fetch error: %s", e)
+
+    # --- T9: Post-earnings drift ∝ analyst dispersion -----------------------
+    if not tests or "T9" in tests:
+        log.info("[T9] Fetching earnings dispersion + computing post-earnings drift...")
+        try:
+            import yfinance as yf
+
+            tickers_t9 = [
+                "AAPL", "MSFT", "AMZN", "GOOGL", "META",
+                "JPM", "JNJ", "XOM", "NVDA", "TSLA",
+                "BRK-B", "UNH", "V", "PG", "HD",
+            ]
+            dispersion_records = []
+            drift_records = []
+
+            for ticker in tickers_t9:
+                try:
+                    stock = yf.Ticker(ticker)
+                    earnings = stock.earnings_dates
+                    if earnings is None or len(earnings) == 0:
+                        continue
+                    earnings = earnings[
+                        ["EPS Estimate", "Reported EPS"]
+                    ].dropna()
+                    if len(earnings) < 3:
+                        continue
+
+                    hist = yf.download(
+                        ticker,
+                        start=start,
+                        progress=False,
+                        auto_adjust=True,
+                    )["Close"]
+                    if hist is None or len(hist) < 30:
+                        continue
+
+                    for date, row in earnings.iterrows():
+                        dt = pd.Timestamp(date).tz_localize(None)
+                        try:
+                            after = hist[hist.index > dt].head(20)
+                            if len(after) < 10:
+                                continue
+                            before_price = hist[hist.index <= dt].iloc[-1]
+                            drift_pct = (after.iloc[-1] - before_price) / before_price
+                            # Dispersion proxy = |EPS surprise| / |EPS Estimate|
+                            est = row["EPS Estimate"]
+                            act = row["Reported EPS"]
+                            if abs(est) < 0.01:
+                                continue
+                            dispersion = abs(act - est) / abs(est)
+                            dispersion_records.append((dt, dispersion))
+                            drift_records.append((dt, drift_pct))
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+
+            if len(dispersion_records) >= 30:
+                idx = [r[0] for r in dispersion_records]
+                data["earnings_dispersion"] = pd.Series(
+                    [r[1] for r in dispersion_records], index=idx
+                )
+                data["post_earnings_drift"] = pd.Series(
+                    [r[1] for r in drift_records], index=idx
+                )
+            else:
+                log.warning("[T9] Only %d earnings events found (need ≥30)",
+                            len(dispersion_records))
+        except Exception as e:
+            log.warning("[T9] Data fetch error: %s", e)
+
+    # Clean up internal cache key
+    data.pop("_prices", None)
+    return data
+
+
+def _save_report(report: "HypothesisReport", output_dir: str) -> str:
+    """Serialise HypothesisReport to JSON and write to output_dir."""
+    import json
+    from pathlib import Path
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    timestamp = report.run_at.strftime("%Y%m%d_%H%M%S")
+    out_path = Path(output_dir) / f"hypothesis_report_{timestamp}.json"
+
+    payload = {
+        "run_at": report.run_at.isoformat(),
+        "passed_count": report.passed_count,
+        "failed_count": report.failed_count,
+        "deploy_recommended": report.deploy_recommended,
+        "blocking_failures": report.blocking_failures,
+        "results": {
+            tid: {
+                "test_id": r.test_id,
+                "name": r.name,
+                "passed": r.passed,
+                "test_statistic": r.test_statistic,
+                "p_value": r.p_value,
+                "threshold": r.threshold,
+                "details": r.details,
+                "error": r.error,
+            }
+            for tid, r in sorted(report.results.items())
+        },
+    }
+
+    with open(out_path, "w") as f:
+        json.dump(payload, f, indent=2, default=str)
+
+    # Also write a "latest" symlink / copy for convenience
+    latest_path = Path(output_dir) / "hypothesis_report_latest.json"
+    with open(latest_path, "w") as f:
+        json.dump(payload, f, indent=2, default=str)
+
+    return str(out_path)
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(
+        description="Run CCDR T1–T9 hypothesis tests. DEPLOYMENT GATE: ≥7/9 must pass.",
+    )
+    parser.add_argument(
+        "--tests",
+        default="",
+        help="Comma-separated subset to run, e.g. T1,T3,T6. Default: all.",
+    )
+    parser.add_argument(
+        "--start-date",
+        default="1990-01-01",
+        help="Historical data start date (default: 1990-01-01).",
+    )
+    parser.add_argument(
+        "--output",
+        default="psibot/backtesting/test_results",
+        help="Directory to write JSON report (default: psibot/backtesting/test_results).",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress per-test detail; print JSON path only.",
+    )
+    args = parser.parse_args()
+
+    # Configure logging
+    level = logging.WARNING if args.quiet else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    tests_requested = [t.strip() for t in args.tests.split(",") if t.strip()]
+    valid_tests = {"T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9"}
+    if tests_requested:
+        invalid = set(tests_requested) - valid_tests
+        if invalid:
+            print(f"ERROR: Unknown test IDs: {invalid}. Valid: {sorted(valid_tests)}")
+            sys.exit(1)
+
+    import os
+    if not os.environ.get("FRED_API_KEY"):
+        print(
+            "WARNING: FRED_API_KEY not set. T2/T4/T6 will use fallback data.\n"
+            "Get a free key at: https://fred.stlouisfed.org/docs/api/api_key.html\n"
+            "Then run: export FRED_API_KEY=your_key_here\n"
+        )
+
+    print(f"Fetching data (start={args.start_date}) — this may take 1–3 minutes...")
+    data = _build_data_dict(
+        tests=tests_requested,
+        start=args.start_date,
+    )
+
+    print("Running hypothesis tests...")
+    runner = CCDRHypothesisTests()
+
+    if tests_requested:
+        # Run all (run_all handles missing data gracefully) then filter results
+        full_report = runner.run_all(data)
+        report = HypothesisReport(
+            run_at=full_report.run_at,
+            results={k: v for k, v in full_report.results.items()
+                     if k in tests_requested},
+            passed_count=sum(1 for k, v in full_report.results.items()
+                             if k in tests_requested and v.passed),
+            failed_count=len(tests_requested) - sum(
+                1 for k, v in full_report.results.items()
+                if k in tests_requested and v.passed
+            ),
+        )
+        report.deploy_recommended = None  # partial run — no gate assessment
+        report.blocking_failures = [
+            k for k in tests_requested
+            if not full_report.results[k].passed
+        ]
+    else:
+        report = runner.run_all(data)
+
+    out_path = _save_report(report, args.output)
+
+    if not args.quiet:
+        print()
+        print(report.summary())
+        print()
+
+    gate = f"{report.passed_count}/9 passed" if not tests_requested else \
+           f"{report.passed_count}/{len(tests_requested)} passed"
+    deploy_str = ""
+    if report.deploy_recommended is True:
+        deploy_str = " → DEPLOYMENT GATE: PASS"
+    elif report.deploy_recommended is False:
+        deploy_str = " → DEPLOYMENT GATE: BLOCKED (need ≥7)"
+
+    print(f"Report saved: {out_path}")
+    print(f"Results: {gate}{deploy_str}")
+
+    # Exit 1 if deployment is blocked
+    if report.deploy_recommended is False:
+        sys.exit(1)
