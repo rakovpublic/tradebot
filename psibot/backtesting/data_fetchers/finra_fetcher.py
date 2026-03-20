@@ -59,7 +59,7 @@ def fetch_finra_ats_weekly(
                 ]),
             }
             resp = requests.get(base_url, params=params, headers=_FINRA_HEADERS,
-                                timeout=30, allow_redirects=False)
+                                timeout=30, allow_redirects=True)
 
             if resp.status_code == 200:
                 data = resp.json()
