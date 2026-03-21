@@ -72,13 +72,15 @@ async def run(state, cross_asset_data) -> object:
         state.momentum_20d  = momentum_20d
         state.momentum_60d  = momentum_60d
         state.momentum_252d = momentum_252d
+        state.vix_term_structure = getattr(cross_asset_data, "vix_term_structure", 0.0)
         state.breadth       = breadth
         state.volume_ratio  = volume_ratio
         state.l5_failed = False
 
         log.info(
-            "L5 complete: acoustic=%s mom20d=%.3f mom60d=%.3f mom252d=%.3f breadth=%.2f",
-            acoustic_signal.value, momentum_20d, momentum_60d, momentum_252d, breadth,
+            "L5 complete: acoustic=%s mom20d=%.3f mom252d=%.3f vts=%.2f breadth=%.2f",
+            acoustic_signal.value, momentum_20d, momentum_252d,
+            state.vix_term_structure, breadth,
         )
         return state
 

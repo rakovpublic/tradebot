@@ -32,6 +32,11 @@ from helpers import (
 _MOM_CRASH  = CCDR_THRESHOLDS["MOM_CRASH_THRESHOLD"]   # -0.20 (T3)
 _MOM_NORMAL = CCDR_THRESHOLDS["MOM_NORMAL_THRESHOLD"]  #  0.05 (T3)
 
+# T8 VIX term structure thresholds (70.6% 3-month regime accuracy)
+# VTS = VIX3M − VIX: positive = contango (normal/bullish), negative = backwardation (crisis)
+_VTS_PANIC       = -5.0   # strong backwardation: VIX 5pts above VIX3M → halve LONG size
+_VTS_BACKWARDATION = 0.0  # any backwardation → reduce LONG size 25%
+
 log = logging.getLogger("psibot.signals.soliton")
 
 # Soliton entry thresholds
@@ -102,6 +107,26 @@ def check_soliton_signal(state, portfolio) -> Optional[dict]:
             "Soliton: T3 gap-zone momentum (%.1f%%) — size halved to %.2f",
             mom_252d * 100, size_mult,
         )
+
+    # T8 VIX term structure filter — only applied to LONG signals.
+    # Backwardation (VTS<0) means VIX > VIX3M: near-term panic elevated vs 3-month calm.
+    # T8 validated 70.6% 3-month accuracy: contango → bullish, backwardation → less bullish.
+    # SHORT solitons are unaffected (backwardation may actually confirm bearish chirality).
+    vts = getattr(state, "vix_term_structure", 0.0)
+    if direction == SignalDirection.LONG:
+        if vts < _VTS_PANIC:
+            size_mult *= 0.50
+            log.warning(
+                "Soliton: VTS panic backwardation (VTS=%.1f < %.0f) — LONG size halved to %.2f",
+                vts, _VTS_PANIC, size_mult,
+            )
+        elif vts < _VTS_BACKWARDATION:
+            size_mult *= 0.75
+            log.info(
+                "Soliton: VTS backwardation (VTS=%.1f) — LONG size reduced 25%% to %.2f",
+                vts, size_mult,
+            )
+
     if state.acoustic_signal == AcousticSignal.CONTRADICT:
         size_mult *= 0.7
         log.info("Soliton: acoustic CONTRADICT — reducing size to %.2f", size_mult)

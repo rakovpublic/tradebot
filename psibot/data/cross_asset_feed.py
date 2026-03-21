@@ -45,6 +45,7 @@ class CrossAssetData:
     momentum_20d: float = 0.0
     momentum_60d: float = 0.0
     momentum_252d: float = 0.0            # 12-month momentum; T3 regime thresholds apply
+    vix_term_structure: float = 0.0       # VIX3M − VIX; T8: >0=contango=bullish regime
     breadth: float = 0.5                  # % assets above 50d MA
     volume_ratio: float = 1.0
 
@@ -108,6 +109,7 @@ class CrossAssetFeed:
             data.momentum_20d = data.compute_momentum(20)
             data.momentum_60d = data.compute_momentum(60)
             data.momentum_252d = data.compute_momentum(252)
+            data.vix_term_structure = await self._fetch_vix_term_structure()
             return data
 
         except Exception as e:
@@ -172,6 +174,32 @@ class CrossAssetFeed:
         log.warning("Bloomberg integration not yet implemented")
         return None
 
+    async def _fetch_vix_term_structure(self) -> float:
+        """
+        Fetch current VIX term structure: VIX3M − VIX.
+        T8 (70.6% accuracy): contango (>0) = bullish 3-month regime; backwardation (<0) = bearish.
+        Returns 0.0 on any failure (neutral, no regime penalty applied).
+        """
+        try:
+            import yfinance as yf
+            from datetime import timedelta
+            end = datetime.utcnow()
+            start = end - timedelta(days=10)
+            raw = yf.download(["^VIX", "^VIX3M"], start=start, end=end,
+                               progress=False, auto_adjust=True)["Close"]
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = [c[0] if isinstance(c, tuple) else c for c in raw.columns]
+            vix_latest  = float(raw["^VIX"].dropna().iloc[-1])
+            vix3m_latest = float(raw["^VIX3M"].dropna().iloc[-1])
+            vts = vix3m_latest - vix_latest
+            log.debug("VTS: VIX3M=%.2f VIX=%.2f → VTS=%.2f (%s)",
+                      vix3m_latest, vix_latest, vts,
+                      "contango" if vts > 0 else "backwardation")
+            return vts
+        except Exception as e:
+            log.warning("VIX term structure fetch failed (%s) — defaulting to 0.0", e)
+            return 0.0
+
     def _make_synthetic_data(self, assets: list[str], window_days: int) -> CrossAssetData:
         """
         Synthetic cross-asset data for testing.
@@ -203,6 +231,7 @@ class CrossAssetFeed:
             momentum_20d=0.01,
             momentum_60d=0.03,
             momentum_252d=0.08,  # synthetic normal regime (>+5% T3 threshold)
+            vix_term_structure=2.0,  # synthetic contango (typical normal market)
             breadth=0.65,
         )
         return data
