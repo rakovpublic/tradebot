@@ -86,6 +86,9 @@ class CondensateState:
     acoustic_signal: AcousticSignal = AcousticSignal.NEUTRAL
     momentum_20d: float = 0.0          # 20-day price momentum
     momentum_60d: float = 0.0          # 60-day price momentum
+    momentum_252d: float = 0.0         # 12-month price momentum (T3 regime detection)
+    # T3 regime: <MOM_CRASH_THRESHOLD(-20%) → crash; >MOM_NORMAL_THRESHOLD(+5%) → normal;
+    #            in between → gap zone (soliton size halved, fat-tail acoustic=CONTRADICT)
     breadth: float = 0.5               # % of assets above 50d MA
     volume_ratio: float = 1.0          # volume / 20d average volume
     put_call_ratio: float = 1.0        # realised put-call ratio
@@ -136,6 +139,7 @@ class CondensateState:
             "acoustic_signal": self.acoustic_signal.value,
             "momentum_20d": round(self.momentum_20d, 4),
             "momentum_60d": round(self.momentum_60d, 4),
+            "momentum_252d": round(self.momentum_252d, 4),
             "breadth": round(self.breadth, 4),
             "signal_size_multiplier": round(self.signal_size_multiplier, 4),
             "l1_failed": self.l1_failed,
