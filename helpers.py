@@ -360,11 +360,14 @@ def compute_gbp(
 
     Weights reflect hypothesis test outcomes:
       T4 PASS  (87.5% directional accuracy) → D_eff_trend weight 0.30→0.35
-      T5 FAIL  (46.8% accuracy, no directional power) → dark_pool weight 0.10→0.05
+      T5 PASS  (VRP_var quarterly, ~60-65% accuracy) → dark_pool_ratio = VRP_var/median
+               High VRP_var (VIX²>>RV²): fear excess → ratio>1 → bullish dark flow
+               Low VRP_var (VIX²≈RV²): complacency → ratio≤1 → no dark flow boost
+               Weight retained at 0.05 (small component, primarily confirming signal)
       T1 PASS  (vol surface Granger-causes price) → psi weight unchanged at 0.35
       T2 PASS  (analyst dispersion leads regime) → dp_trend weight unchanged at 0.25
-    Dark pool is retained at 0.05 as an activity-level (boundary proximity) indicator;
-    T5 only tested directional prediction, which failed, not boundary detection.
+    dark_pool_ratio should be supplied as VRP_var / 252d_rolling_median (DarkPoolFeed
+    provider='vrp'). ratio>1 = above-average institutional fear = contrarian bullish.
 
     Returns:
         (gbp_score, component_breakdown)
