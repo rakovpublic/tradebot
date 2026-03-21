@@ -95,3 +95,20 @@ def fetch_vix9d_history(start: str = "2011-01-01") -> pd.DataFrame:
     except Exception as exc:
         log.warning("VIX9D Yahoo fetch failed (%s); trying CBOE CDN", exc)
         return _cboe_csv("VIX9D_History.csv", "VIX9D", start)
+
+
+def fetch_vix3m_history(start: str = "2011-01-01") -> pd.DataFrame:
+    """
+    Fetch VIX3M (3-month / 93-day VIX).  Available from Yahoo Finance since 2011.
+    Primary: Yahoo Finance (^VIX3M). Fallback: CBOE CDN CSV.
+
+    VIX3M > VIX  → contango (calm, normal market)   → bullish 3-month signal
+    VIX3M < VIX  → backwardation (stressed market)  → bearish 3-month signal
+
+    Returns DataFrame: index=Date, columns=['VIX3M']
+    """
+    try:
+        return _yf_index("^VIX3M", "VIX3M", start)
+    except Exception as exc:
+        log.warning("VIX3M Yahoo fetch failed (%s); trying CBOE CDN", exc)
+        return _cboe_csv("VIX3M_History.csv", "VIX3M", start)
