@@ -44,6 +44,7 @@ class CrossAssetData:
     spx_prices: Optional[pd.Series] = None
     momentum_20d: float = 0.0
     momentum_60d: float = 0.0
+    momentum_252d: float = 0.0            # 12-month momentum; T3 regime thresholds apply
     breadth: float = 0.5                  # % assets above 50d MA
     volume_ratio: float = 1.0
 
@@ -106,6 +107,7 @@ class CrossAssetFeed:
             data.breadth = data.compute_breadth()
             data.momentum_20d = data.compute_momentum(20)
             data.momentum_60d = data.compute_momentum(60)
+            data.momentum_252d = data.compute_momentum(252)
             return data
 
         except Exception as e:
@@ -157,7 +159,7 @@ class CrossAssetFeed:
             yf_tickers = [ticker_map[a] for a in available]
 
             end = datetime.utcnow()
-            start = end - timedelta(days=120)
+            start = end - timedelta(days=300)  # 300d to cover 252d momentum + buffer
             data = yf.download(yf_tickers, start=start, end=end, progress=False)["Close"]
             data.columns = available
             return data.dropna(how="all")
@@ -200,6 +202,7 @@ class CrossAssetFeed:
             spx_prices=spx_prices,
             momentum_20d=0.01,
             momentum_60d=0.03,
+            momentum_252d=0.08,  # synthetic normal regime (>+5% T3 threshold)
             breadth=0.65,
         )
         return data

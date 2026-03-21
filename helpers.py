@@ -355,8 +355,16 @@ def compute_gbp(
     dp_trend_90th_pctile: float = 0.05,  # calibrate from historical data
 ) -> tuple[float, dict[str, float]]:
     """
-    GBP = 0.35*f(ψ) + 0.25*f(DP) + 0.30*f(D_eff) + 0.10*f(dark_pool)
+    GBP = 0.35*f(ψ) + 0.25*f(DP) + 0.35*f(D_eff) + 0.05*f(dark_pool)
     GBP ∈ [0, 1]: 0=stable grain, 1=crossing imminent
+
+    Weights reflect hypothesis test outcomes:
+      T4 PASS  (87.5% directional accuracy) → D_eff_trend weight 0.30→0.35
+      T5 FAIL  (46.8% accuracy, no directional power) → dark_pool weight 0.10→0.05
+      T1 PASS  (vol surface Granger-causes price) → psi weight unchanged at 0.35
+      T2 PASS  (analyst dispersion leads regime) → dp_trend weight unchanged at 0.25
+    Dark pool is retained at 0.05 as an activity-level (boundary proximity) indicator;
+    T5 only tested directional prediction, which failed, not boundary detection.
 
     Returns:
         (gbp_score, component_breakdown)
@@ -375,7 +383,7 @@ def compute_gbp(
     f_deff = float(np.clip(-d_eff_trend_20d / 1.0, 0, 1))
     f_dark = float(np.clip(dark_pool_ratio - 1.0, 0, 1))
 
-    gbp = 0.35*f_psi + 0.25*f_dp + 0.30*f_deff + 0.10*f_dark
+    gbp = 0.35*f_psi + 0.25*f_dp + 0.35*f_deff + 0.05*f_dark
     gbp = float(np.clip(gbp, 0.0, 1.0))
 
     components = {
@@ -707,4 +715,10 @@ CCDR_THRESHOLDS = {
     "MAX_LEVERAGE":      2.0,
     "DRAWDOWN_CB":       0.05,
     "GUARDIAN_COOLOFF_H": 48,
+    # T3-validated momentum regime thresholds (Hartigan dip test on balanced
+    # crash/normal clusters, seed=42).  Used by L5 and soliton signal.
+    "MOM_CRASH_THRESHOLD":  -0.20,  # 12m rolling MOM < -20% → crash regime: block soliton
+    "MOM_NORMAL_THRESHOLD":  0.05,  # 12m rolling MOM > +5% → normal regime: full sizing
+    # Gap zone: MOM_CRASH_THRESHOLD ≤ mom_252d < MOM_NORMAL_THRESHOLD
+    # Transitional uncertainty — soliton size halved, acoustic CONTRADICT on fat tails
 }

@@ -29,6 +29,9 @@ from helpers import (
     SignalClass, SignalDirection, CCDR_THRESHOLDS,
 )
 
+_MOM_CRASH  = CCDR_THRESHOLDS["MOM_CRASH_THRESHOLD"]   # -0.20 (T3)
+_MOM_NORMAL = CCDR_THRESHOLDS["MOM_NORMAL_THRESHOLD"]  #  0.05 (T3)
+
 log = logging.getLogger("psibot.signals.soliton")
 
 # Soliton entry thresholds
@@ -80,8 +83,25 @@ def check_soliton_signal(state, portfolio) -> Optional[dict]:
             log.debug("Soliton: existing %s position — skipping", direction.value)
             return None
 
-    # Adjust sizing for acoustic contradiction
+    # T3 momentum regime check — bimodal crash structure validated by Hartigan dip test.
+    # Crash regime (<-20% 12m MOM): soliton topological protection fails abruptly → block.
+    # Gap zone (-20% to +5%):       transitional uncertainty → halve size.
+    mom_252d = getattr(state, "momentum_252d", 0.0)
+    if mom_252d < _MOM_CRASH:
+        log.warning(
+            "Soliton BLOCKED: crash regime (mom252d=%.1f%% < %.0f%%) — soliton collapse risk",
+            mom_252d * 100, _MOM_CRASH * 100,
+        )
+        return None
+
+    # Adjust sizing for acoustic contradiction and T3 gap zone
     size_mult = state.signal_size_multiplier
+    if mom_252d < _MOM_NORMAL:
+        size_mult *= 0.50
+        log.info(
+            "Soliton: T3 gap-zone momentum (%.1f%%) — size halved to %.2f",
+            mom_252d * 100, size_mult,
+        )
     if state.acoustic_signal == AcousticSignal.CONTRADICT:
         size_mult *= 0.7
         log.info("Soliton: acoustic CONTRADICT — reducing size to %.2f", size_mult)
