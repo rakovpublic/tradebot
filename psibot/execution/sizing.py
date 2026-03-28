@@ -88,19 +88,44 @@ def size_order(signal: dict, state, portfolio, config: dict = None) -> float:
     return float(final_usd)
 
 
+def vrp_confidence_factor(state) -> float:
+    """
+    VRP vol-regime confidence → sizing factor.
+
+    High VRP (high_vol regime) → expect large moves → reduce size (risk mgmt).
+    Low VRP (low_vol regime) → calm markets → allow full size.
+    Normal → no adjustment.
+
+    vrp_confidence ∈ [0, 1] measures how far VRP is from its rolling median.
+    """
+    regime = getattr(state, "vrp_regime", "normal")
+    confidence = getattr(state, "vrp_confidence", 0.5)
+
+    if regime == "high_vol":
+        # Scale down: high confidence → stronger reduction (min 0.5× at confidence=1.0)
+        return 1.0 - 0.5 * confidence
+    elif regime == "low_vol":
+        # Scale up slightly: calm markets → allow +20% at full confidence
+        return 1.0 + 0.2 * confidence
+    return 1.0
+
+
 def compute_size_multiplier(state) -> float:
     """
     Compute the signal_size_multiplier field for CondensateState.
     Called at end of pipeline to store in state object.
+
+    Incorporates VRP vol-regime confidence as a sizing lever:
+      high VRP → expect large moves → reduce position size
+      low VRP → calm markets → allow larger size
     """
-    from helpers import compute_position_size
-    # Compute as fraction of max_risk_usd (normalised 0-1)
     f_deff = d_eff_to_size_factor(state.d_eff)
     f_gbp = gbp_to_size_factor(state.gbp)
-    base = f_deff * f_gbp
+    f_vrp = vrp_confidence_factor(state)
+    base = f_deff * f_gbp * f_vrp
 
     if state.acoustic_signal == AcousticSignal.CONFIRM:
         return min(base * 1.2, 1.0)
     elif state.acoustic_signal == AcousticSignal.CONTRADICT:
         return base * 0.7
-    return base
+    return min(base, 1.0)

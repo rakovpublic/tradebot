@@ -89,6 +89,8 @@ class CondensateState:
     momentum_252d: float = 0.0         # 12-month price momentum (T3 regime detection)
     # T3 regime: <MOM_CRASH_THRESHOLD(-20%) → crash; >MOM_NORMAL_THRESHOLD(+5%) → normal;
     #            in between → gap zone (soliton size halved, fat-tail acoustic=CONTRADICT)
+    vrp_regime: str = "normal"         # "high_vol", "low_vol", "normal" — from VRP signal
+    vrp_confidence: float = 0.5        # VRP vol-regime confidence ∈ [0, 1]; used for sizing
     vix_term_structure: float = 0.0    # VIX3M − VIX (daily); >0=contango=bullish, <0=backwardation=bearish
     # T8 regime (70.6% 3-month accuracy): VTS<0 (backwardation) → reduce LONG soliton size;
     #   VTS< -5 (panic backwardation) → halve LONG soliton; VTS>0 (contango) → normal
@@ -143,6 +145,8 @@ class CondensateState:
             "momentum_20d": round(self.momentum_20d, 4),
             "momentum_60d": round(self.momentum_60d, 4),
             "momentum_252d": round(self.momentum_252d, 4),
+            "vrp_regime": self.vrp_regime,
+            "vrp_confidence": round(self.vrp_confidence, 4),
             "vix_term_structure": round(self.vix_term_structure, 4),
             "breadth": round(self.breadth, 4),
             "signal_size_multiplier": round(self.signal_size_multiplier, 4),
