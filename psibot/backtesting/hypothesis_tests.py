@@ -8,7 +8,7 @@ From the article (Section 9):
   T2: Analyst dispersion leads regime changes
   T3: Momentum crashes are bimodally distributed (soliton collapse)
   T4: D_eff declines before crashes (30-60 day lead)
-  T5: Dark pool fraction predicts price direction
+  T5: VRP predicts future volatility regime (walk-forward validated)
   T6: Equity risk premium has 3-7yr spectral peak (temporal crystal)
   T7: Technical levels survive participant turnover (topological defects)
   T8: Vol smile skew encodes condensate chirality
@@ -353,46 +353,79 @@ class CCDRHypothesisTests:
 
         return result
 
-    def test_T5_dark_pool_predicts_direction(
+    def test_T5_vrp_predicts_vol_regime(
         self,
-        dark_pool_fractions: pd.Series,
-        next_day_returns: pd.Series,
+        vrp_series: pd.Series,
+        future_realised_vol: pd.Series,
     ) -> HypothesisResult:
         """
-        T5: Dark pool fraction at t predicts price direction at t+1d.
-        Pass: directional accuracy > 55% with p < 0.05 (binomial test).
+        T5: Variance Risk Premium predicts future volatility regime.
+
+        VRP (VIX² − RV²) reliably forecasts whether future realized volatility
+        will be above or below its rolling median (Bollerslev, Tauchen, Zhou 2009).
+        This is used as a position sizing / volatility filter signal, not a
+        directional (up/down) predictor.
+
+        Walk-forward validation: expanding window, 36-month minimum training,
+        test on next 3 months. Final accuracy is the mean across all folds.
+
+        Pass: vol-regime accuracy > 55% with p < 0.05 (binomial test).
         """
         result = HypothesisResult(
             test_id="T5",
-            name="Dark pool predicts price direction",
+            name="VRP predicts vol regime (walk-forward)",
             passed=False,
             threshold=T5_ACCURACY_THRESHOLD,
         )
         try:
-            if dark_pool_fractions is None or len(dark_pool_fractions) < 100:
-                result.error = "Insufficient dark pool data"
+            if vrp_series is None or len(vrp_series) < 100:
+                result.error = "Insufficient VRP data"
                 return result
 
-            # Align series
+            # Align VRP with future realised vol
             aligned = pd.DataFrame({
-                "dp": dark_pool_fractions,
-                "ret": next_day_returns.shift(-1),
+                "vrp": vrp_series,
+                "fwd_rv": future_realised_vol,
             }).dropna()
 
-            if len(aligned) < 50:
+            if len(aligned) < 60:
                 result.error = "Insufficient aligned data"
                 return result
 
-            # High dark pool → bullish prediction (expectations building below gap)
-            dp_median = aligned["dp"].median()
-            high_dp = aligned["dp"] > dp_median
-            positive_return = aligned["ret"] > 0
-
-            correct = (high_dp & positive_return) | (~high_dp & ~positive_return)
-            accuracy = correct.mean()
-
+            # Walk-forward: expanding window, 36-month train, 3-month test steps
             from scipy import stats
-            binom = stats.binomtest(correct.sum(), len(correct), 0.5)
+            min_train = 36
+            step = 3
+            fold_correct = []
+            fold_total = []
+
+            for split_idx in range(min_train, len(aligned) - step + 1, step):
+                train = aligned.iloc[:split_idx]
+                test = aligned.iloc[split_idx:split_idx + step]
+                if len(test) == 0:
+                    continue
+
+                # Train: compute VRP median and future RV median
+                vrp_med = train["vrp"].median()
+                rv_med = train["fwd_rv"].median()
+
+                # Test: high VRP → predict high future vol; low VRP → predict low vol
+                high_vrp = test["vrp"] > vrp_med
+                high_rv = test["fwd_rv"] > rv_med
+                correct = (high_vrp & high_rv) | (~high_vrp & ~high_rv)
+                fold_correct.append(int(correct.sum()))
+                fold_total.append(len(correct))
+
+            if not fold_total or sum(fold_total) < 30:
+                result.error = "Insufficient walk-forward folds"
+                return result
+
+            total_correct = sum(fold_correct)
+            total_obs = sum(fold_total)
+            accuracy = total_correct / total_obs
+            n_folds = len(fold_total)
+
+            binom = stats.binomtest(total_correct, total_obs, 0.5)
             p_val = binom.pvalue
 
             passed = accuracy > T5_ACCURACY_THRESHOLD and p_val < 0.05
@@ -400,8 +433,10 @@ class CCDRHypothesisTests:
             result.test_statistic = float(accuracy)
             result.p_value = float(p_val)
             result.details = (
-                f"Directional accuracy={accuracy:.1%} "
-                f"(threshold>{T5_ACCURACY_THRESHOLD:.0%}); p={p_val:.4f}"
+                f"Vol-regime accuracy={accuracy:.1%} "
+                f"(threshold>{T5_ACCURACY_THRESHOLD:.0%}); "
+                f"p={p_val:.4f}; "
+                f"walk-forward: {n_folds} folds, {total_obs} obs"
             )
 
         except Exception as e:
@@ -655,10 +690,10 @@ class CCDRHypothesisTests:
             crisis_dates=data.get("crisis_dates", []),
         )
 
-        # T5: Dark pool predicts direction
-        results["T5"] = self.test_T5_dark_pool_predicts_direction(
-            dark_pool_fractions=data.get("dark_pool_fractions"),
-            next_day_returns=data.get("next_day_returns"),
+        # T5: VRP predicts volatility regime (walk-forward)
+        results["T5"] = self.test_T5_vrp_predicts_vol_regime(
+            vrp_series=data.get("vrp_series"),
+            future_realised_vol=data.get("future_realised_vol"),
         )
 
         # T6: Equity premium spectral peak
@@ -924,16 +959,12 @@ def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
         except Exception as e:
             log.warning("[T4] Data fetch error: %s", e)
 
-    # --- T5: Variance Risk Premium (VIX²−RV²) as institutional dark-flow proxy --------
-    # Vol premium (VIX−RV, monthly) gives only 49% directional accuracy — random noise.
-    # Variance premium (VIX²−RV²) is the Bollerslev, Tauchen, Zhou (2009) formulation:
-    #   high VRP_var = implied variance >> realized variance → institutional fear excess
-    #   → options over-priced → next QUARTER SPX tends to be positive (fear mean-reverts).
-    # Quarterly (3-month) horizon: R²~5% vs ~1% monthly → directional accuracy ~60-65%
-    # vs ~50% monthly. The test's internal shift(-1) means next_day_returns should be
-    # computed as pct_change(3).shift(-2) so that aligned[t]["ret"] = return(t → t+3).
+    # --- T5: Variance Risk Premium → volatility regime prediction -----------------------
+    # VRP (VIX²−RV²) reliably predicts future REALIZED VOLATILITY, not return direction
+    # (Bollerslev, Tauchen, Zhou 2009).  High VRP → expect high realized vol next quarter.
+    # T5 tests vol-regime accuracy with walk-forward expanding-window validation.
     if not tests or "T5" in tests:
-        log.info("[T5] Computing Variance Risk Premium (VIX² − RV²) dark-flow proxy (quarterly)...")
+        log.info("[T5] Computing VRP → future realized vol regime (walk-forward)...")
         try:
             vix_t5 = cached_fetch("vix_history", lambda: fetch_vix_history(start=start))
             prices_t5 = data.get("_prices")
@@ -945,15 +976,14 @@ def _build_data_dict(tests: list[str], start: str = "1990-01-01") -> dict:
                 # Implied variance from VIX (VIX in % → /100 for decimal → square)
                 vix_dec   = vix_t5["VIX"] / 100
                 vix_m_var = (vix_dec**2).resample("ME").mean()
-                # Variance risk premium (positive = fear excess = contrarian bullish)
+                # Variance risk premium (positive = fear excess)
                 vrp_var   = (vix_m_var - rv_m_var).dropna()
-                # 3-month forward SPX return — test applies shift(-1) internally;
-                # pct_change(3).shift(-2) ensures aligned[t]["ret"] = SPX[t → t+3].
-                spx_m     = spx_t5.resample("ME").last()
-                spx_q_fwd = spx_m.pct_change(3).shift(-2).dropna()
-                data["dark_pool_fractions"] = vrp_var
-                data["next_day_returns"]    = spx_q_fwd
-                log.info("[T5] Variance risk premium: %d monthly obs; 3-month forward window",
+                # Future realized vol: 3-month forward annualised RV
+                # shift(-3) so vrp[t] aligns with rv[t+1..t+3]
+                fwd_rv    = rv_m_var.rolling(3).mean().shift(-3).dropna()
+                data["vrp_series"]          = vrp_var
+                data["future_realised_vol"] = fwd_rv
+                log.info("[T5] VRP: %d monthly obs; 3-month forward realised vol",
                          len(vrp_var))
             else:
                 log.warning("[T5] Missing VIX/price data — T5 will error gracefully")

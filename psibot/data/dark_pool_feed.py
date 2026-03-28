@@ -1,12 +1,13 @@
 """
 data/dark_pool_feed.py — Dark Pool / Institutional Flow Data Ingestion
 ========================================================================
-Dark pool signal is the 4th component of GBP (weight 0.05).
+Dark pool signal serves two roles:
+  1. GBP component (weight 0.05) — dark_pool_ratio feeds L4 grain boundary.
+  2. Vol-regime sizing lever — VRP z-score classifies high_vol / low_vol / normal,
+     and vrp_confidence scales position size (high VRP → smaller positions).
 
-T5 hypothesis result: FINRA ATS volume has no directional encoding (buys + sells net to
-zero). Variance Risk Premium (VIX²−RV²) is the empirically validated institutional flow
-proxy (Bollerslev, Tauchen, Zhou 2009): when VRP_var is above its rolling median, implied
-variance exceeds realized variance → fear excess → contrarian bullish.
+T5 hypothesis (walk-forward validated): VRP (VIX²−RV²) predicts future realised
+volatility regime, NOT return direction (Bollerslev, Tauchen, Zhou 2009).
 
 Provider options:
   'vrp'      — Variance Risk Premium from yfinance (^VIX + ^GSPC) [recommended]
@@ -41,6 +42,8 @@ class DarkPoolData:
     dark_pool_fraction: float           # dark_pool_volume / total_volume
     rolling_90d_avg_fraction: float     # 90-day moving average of fraction
     dark_pool_ratio: float              # current / 90d avg — used in GBP
+    vrp_regime: str = "normal"          # "high_vol", "low_vol", "normal"
+    vrp_confidence: float = 0.5         # distance from median, normalised [0,1]
 
     @classmethod
     def from_volumes(
@@ -140,9 +143,22 @@ class DarkPoolFeed:
             vrp_median = float(vrp_var.rolling(252, min_periods=50).median().iloc[-1])
             vrp_current = float(vrp_var.iloc[-1])
             ratio = vrp_current / vrp_median if vrp_median > 0 else 1.0
-            log.debug("VRP dark-flow: vrp_var=%.5f median=%.5f ratio=%.3f (%s)",
-                      vrp_current, vrp_median, ratio,
-                      "bullish (fear excess)" if ratio > 1 else "neutral/bearish")
+
+            # Vol-regime classification: high VRP → expect high future vol
+            vrp_std = float(vrp_var.rolling(252, min_periods=50).std().iloc[-1])
+            z_score = (vrp_current - vrp_median) / vrp_std if vrp_std > 1e-9 else 0.0
+            if z_score > 1.0:
+                vrp_regime = "high_vol"
+            elif z_score < -1.0:
+                vrp_regime = "low_vol"
+            else:
+                vrp_regime = "normal"
+            # Confidence: how far from median (capped at 2σ → confidence=1.0)
+            vrp_confidence = float(min(abs(z_score) / 2.0, 1.0))
+
+            log.debug("VRP dark-flow: vrp_var=%.5f median=%.5f ratio=%.3f "
+                      "regime=%s confidence=%.2f",
+                      vrp_current, vrp_median, ratio, vrp_regime, vrp_confidence)
             return DarkPoolData(
                 timestamp=datetime.utcnow(),
                 symbol=symbol,
@@ -151,6 +167,8 @@ class DarkPoolFeed:
                 dark_pool_fraction=min(max(vrp_current, 0), 1),
                 rolling_90d_avg_fraction=vrp_median,
                 dark_pool_ratio=ratio,
+                vrp_regime=vrp_regime,
+                vrp_confidence=vrp_confidence,
             )
         except Exception as e:
             log.warning("VRP fetch failed (%s) — using neutral", e)

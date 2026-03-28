@@ -192,6 +192,10 @@ class PsiBotOrchestrator:
             symbol = self.config.get("data", {}).get("options", {}).get("symbols", ["SPX"])[0]
             dp_data = await self.dark_pool_feed.get_dark_pool_data(symbol)
             dark_pool_ratio = dp_data.dark_pool_ratio if dp_data else 1.0
+            # Propagate VRP vol-regime signal for position sizing
+            if dp_data:
+                state.vrp_regime = dp_data.vrp_regime
+                state.vrp_confidence = dp_data.vrp_confidence
             state = await l4_grain_boundary.run(state, dark_pool_ratio)
         except Exception as e:
             log.error("L4 exception: %s", e)
